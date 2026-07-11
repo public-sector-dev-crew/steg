@@ -15,6 +15,7 @@ use Steg\Exception\InvalidResponseException;
 use Steg\Exception\ModelNotFoundException;
 use Steg\Model\ChatMessage;
 use Steg\Model\CompletionOptions;
+use Steg\Model\ResponseFormat;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 
@@ -42,6 +43,33 @@ final class OpenAiCompatibleClientTest extends TestCase
                 'completion_tokens' => 10,
                 'total_tokens' => 30,
             ],
+        ], \JSON_THROW_ON_ERROR);
+    }
+
+    private function makeToolCallResponse(string $argumentsJson = '{"city":"Berlin"}'): string
+    {
+        return json_encode([
+            'id' => 'chatcmpl-tool',
+            'object' => 'chat.completion',
+            'model' => 'llama-3.3-70b',
+            'choices' => [
+                [
+                    'index' => 0,
+                    'message' => [
+                        'role' => 'assistant',
+                        'content' => null,
+                        'tool_calls' => [
+                            [
+                                'id' => 'call_abc',
+                                'type' => 'function',
+                                'function' => ['name' => 'get_weather', 'arguments' => $argumentsJson],
+                            ],
+                        ],
+                    ],
+                    'finish_reason' => 'tool_calls',
+                ],
+            ],
+            'usage' => ['prompt_tokens' => 15, 'completion_tokens' => 8, 'total_tokens' => 23],
         ], \JSON_THROW_ON_ERROR);
     }
 
@@ -114,6 +142,45 @@ final class OpenAiCompatibleClientTest extends TestCase
         self::assertSame(20, $response->promptTokens);
         self::assertSame(10, $response->completionTokens);
         self::assertSame(30, $response->totalTokens());
+    }
+
+    public function testCompleteSendsResponseFormatInRequestBody(): void
+    {
+        $mock = new MockResponse($this->makeSuccessResponse('{"translation":"ok"}'));
+        $client = $this->makeClient(new MockHttpClient($mock));
+        $schema = ['type' => 'object', 'properties' => ['translation' => ['type' => 'string']], 'required' => ['translation']];
+
+        $client->complete(
+            [ChatMessage::user('Translate.')],
+            (new CompletionOptions())->withResponseFormat(ResponseFormat::jsonSchema($schema, name: 'translation_output')),
+        );
+
+        $body = $mock->getRequestOptions()['body'] ?? null;
+        if (!\is_string($body)) {
+            self::fail('request body was not captured as a string');
+        }
+        $payload = json_decode($body, true, 512, \JSON_THROW_ON_ERROR);
+        if (!\is_array($payload)) {
+            self::fail('request body is not a JSON object');
+        }
+        self::assertSame([
+            'type' => 'json_schema',
+            'json_schema' => ['name' => 'translation_output', 'schema' => $schema, 'strict' => true],
+        ], $payload['response_format'] ?? null);
+    }
+
+    public function testCompleteParsesToolCallResponse(): void
+    {
+        $client = $this->makeClient(new MockHttpClient(new MockResponse($this->makeToolCallResponse())));
+
+        $response = $client->complete([ChatMessage::user('Weather in Berlin?')]);
+
+        self::assertNull($response->content);
+        self::assertTrue($response->hasToolCalls());
+        self::assertCount(1, $response->toolCalls);
+        self::assertSame('get_weather', $response->toolCalls[0]->name);
+        self::assertSame(['city' => 'Berlin'], $response->toolCalls[0]->arguments);
+        self::assertSame('tool_calls', $response->finishReason);
     }
 
     public function testCompleteWithOptions(): void

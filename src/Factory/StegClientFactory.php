@@ -9,6 +9,7 @@ namespace Steg\Factory;
 
 use Steg\Client\MockClient;
 use Steg\Client\OpenAiCompatibleClient;
+use Steg\Client\RetryingInferenceClient;
 use Steg\StegClient;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
@@ -93,8 +94,11 @@ final class StegClientFactory
         $timeout = isset($query['timeout']) && is_numeric($query['timeout'])
             ? (int) $query['timeout']
             : 120;
+        $retries = isset($query['retries']) && is_numeric($query['retries'])
+            ? (int) $query['retries']
+            : 0;
 
-        return self::buildClient($baseUrl, $model, $apiKey, $timeout, $httpClient);
+        return self::buildClient($baseUrl, $model, $apiKey, $timeout, $httpClient, $retries);
     }
 
     /**
@@ -116,8 +120,11 @@ final class StegClientFactory
         $timeout = isset($config['timeout']) && is_numeric($config['timeout'])
             ? (int) $config['timeout']
             : 120;
+        $retries = isset($config['retries']) && is_numeric($config['retries'])
+            ? (int) $config['retries']
+            : 0;
 
-        return self::buildClient(rtrim($baseUrl, '/'), $model, $apiKey, $timeout, $httpClient);
+        return self::buildClient(rtrim($baseUrl, '/'), $model, $apiKey, $timeout, $httpClient, $retries);
     }
 
     private static function buildClient(
@@ -126,20 +133,26 @@ final class StegClientFactory
         string $apiKey,
         int $timeout,
         ?HttpClientInterface $httpClient,
+        int $retries = 0,
     ): StegClient {
         if (null === $httpClient) {
             $httpClient = self::createDefaultHttpClient();
         }
 
-        return new StegClient(
-            new OpenAiCompatibleClient(
-                httpClient: $httpClient,
-                baseUrl: $baseUrl,
-                model: $model,
-                apiKey: $apiKey,
-                timeout: $timeout,
-            ),
+        $client = new OpenAiCompatibleClient(
+            httpClient: $httpClient,
+            baseUrl: $baseUrl,
+            model: $model,
+            apiKey: $apiKey,
+            timeout: $timeout,
         );
+
+        // Opt-in transport retry: wrap only when requested, so the default stays exactly v1.0 (no retry).
+        $inner = $retries > 0
+            ? new RetryingInferenceClient($client, maxAttempts: $retries + 1)
+            : $client;
+
+        return new StegClient($inner);
     }
 
     private static function createDefaultHttpClient(): HttpClientInterface

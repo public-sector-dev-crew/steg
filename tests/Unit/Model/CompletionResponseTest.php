@@ -71,4 +71,76 @@ final class CompletionResponseTest extends TestCase
 
         self::assertSame(50, $response->totalTokens());
     }
+
+    public function testFromApiResponseKeepsTextAndReportsNoToolCalls(): void
+    {
+        $response = CompletionResponse::fromApiResponse([
+            'choices' => [['message' => ['role' => 'assistant', 'content' => 'Hi'], 'finish_reason' => 'stop']],
+        ], 1.0);
+
+        self::assertSame('Hi', $response->content);
+        self::assertFalse($response->hasToolCalls());
+        self::assertSame([], $response->toolCalls);
+    }
+
+    public function testFromApiResponseParsesToolCallWithJsonStringArguments(): void
+    {
+        // OpenAI/vLLM shape: content is null and arguments is a JSON string.
+        $response = CompletionResponse::fromApiResponse([
+            'model' => 'llama',
+            'choices' => [[
+                'message' => [
+                    'role' => 'assistant',
+                    'content' => null,
+                    'tool_calls' => [[
+                        'id' => 'call_1',
+                        'type' => 'function',
+                        'function' => ['name' => 'get_weather', 'arguments' => '{"city":"Berlin"}'],
+                    ]],
+                ],
+                'finish_reason' => 'tool_calls',
+            ]],
+        ], 1.0);
+
+        self::assertNull($response->content);
+        self::assertTrue($response->hasToolCalls());
+        self::assertCount(1, $response->toolCalls);
+        self::assertSame('call_1', $response->toolCalls[0]->id);
+        self::assertSame('get_weather', $response->toolCalls[0]->name);
+        self::assertSame(['city' => 'Berlin'], $response->toolCalls[0]->arguments);
+    }
+
+    public function testFromApiResponseParsesToolCallWithObjectArguments(): void
+    {
+        // Ollama native shape: arguments is an already-decoded object.
+        $response = CompletionResponse::fromApiResponse([
+            'choices' => [[
+                'message' => [
+                    'role' => 'assistant',
+                    'tool_calls' => [[
+                        'id' => 'call_2',
+                        'function' => ['name' => 'lookup', 'arguments' => ['id' => 42]],
+                    ]],
+                ],
+                'finish_reason' => 'tool_calls',
+            ]],
+        ], 1.0);
+
+        self::assertNull($response->content);
+        self::assertSame(['id' => 42], $response->toolCalls[0]->arguments);
+    }
+
+    public function testFromApiResponseSkipsMalformedToolCallEntries(): void
+    {
+        // An entry without a function object is skipped; content carries the response instead.
+        $response = CompletionResponse::fromApiResponse([
+            'choices' => [[
+                'message' => ['role' => 'assistant', 'content' => 'text', 'tool_calls' => ['garbage']],
+                'finish_reason' => 'stop',
+            ]],
+        ], 1.0);
+
+        self::assertSame('text', $response->content);
+        self::assertFalse($response->hasToolCalls());
+    }
 }

@@ -26,6 +26,11 @@ final readonly class CompletionOptions
         public readonly ?array $stop = null,
         public readonly float $frequencyPenalty = 0.0,
         public readonly float $presencePenalty = 0.0,
+        public readonly ?ResponseFormat $responseFormat = null,
+        /** @var list<array<string, mixed>>|null OpenAI-shaped tool/function definitions, passed through opaquely (steg v1.1) */
+        public readonly ?array $tools = null,
+        /** @var string|array<string, mixed>|null 'auto'/'none'/'required' or a named-tool object, passed through opaquely */
+        public readonly string|array|null $toolChoice = null,
     ) {
     }
 
@@ -79,6 +84,9 @@ final readonly class CompletionOptions
             stop: $this->stop,
             frequencyPenalty: $this->frequencyPenalty,
             presencePenalty: $this->presencePenalty,
+            responseFormat: $this->responseFormat,
+            tools: $this->tools,
+            toolChoice: $this->toolChoice,
         );
     }
 
@@ -91,6 +99,27 @@ final readonly class CompletionOptions
             stop: $this->stop,
             frequencyPenalty: $this->frequencyPenalty,
             presencePenalty: $this->presencePenalty,
+            responseFormat: $this->responseFormat,
+            tools: $this->tools,
+            toolChoice: $this->toolChoice,
+        );
+    }
+
+    /**
+     * Request a decode-time output constraint (steg v1.1). Pass null to clear it.
+     */
+    public function withResponseFormat(?ResponseFormat $responseFormat): self
+    {
+        return new self(
+            temperature: $this->temperature,
+            maxTokens: $this->maxTokens,
+            topP: $this->topP,
+            stop: $this->stop,
+            frequencyPenalty: $this->frequencyPenalty,
+            presencePenalty: $this->presencePenalty,
+            responseFormat: $responseFormat,
+            tools: $this->tools,
+            toolChoice: $this->toolChoice,
         );
     }
 
@@ -109,6 +138,19 @@ final readonly class CompletionOptions
 
         if (null !== $this->stop) {
             $data['stop'] = $this->stop;
+        }
+
+        // Omit for Text/null so the payload stays byte-identical to pre-v1.1 for unconstrained calls.
+        if (null !== $this->responseFormat && ResponseFormatMode::Text !== $this->responseFormat->mode) {
+            $data['response_format'] = $this->responseFormat->toArray();
+        }
+
+        if (null !== $this->tools) {
+            $data['tools'] = $this->tools;
+        }
+
+        if (null !== $this->toolChoice) {
+            $data['tool_choice'] = $this->toolChoice;
         }
 
         return $data;

@@ -8,6 +8,7 @@ declare(strict_types=1);
 namespace Steg;
 
 use Steg\Client\InferenceClientInterface;
+use Steg\Exception\InvalidResponseException;
 use Steg\Model\ChatMessage;
 use Steg\Model\CompletionOptions;
 use Steg\Model\CompletionResponse;
@@ -36,7 +37,8 @@ final class StegClient implements InferenceClientInterface
      */
     public function ask(string $prompt, ?CompletionOptions $options = null): string
     {
-        return $this->complete([ChatMessage::user($prompt)], $options)->content;
+        return $this->complete([ChatMessage::user($prompt)], $options)->content
+            ?? throw new InvalidResponseException('Response carries no text content (tool call only); use complete() to read tool calls.');
     }
 
     /**
@@ -47,7 +49,8 @@ final class StegClient implements InferenceClientInterface
         return $this->complete([
             ChatMessage::system($system),
             ChatMessage::user($user),
-        ], $options)->content;
+        ], $options)->content
+            ?? throw new InvalidResponseException('Response carries no text content (tool call only); use complete() to read tool calls.');
     }
 
     /**
